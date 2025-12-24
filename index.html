@@ -6,7 +6,7 @@
   <title>bhavsar.ai</title>
 
   <!-- jsPlumb Community (Browser UI bundle) -->
-  <script src="https://cdn.jsdelivr.net/npm/@jsplumb/browser-ui@6.2.8/js/jsplumb.browser-ui.umd.min.js"></script>
+<script src="https://unpkg.com/@jsplumb/browser-ui@6.2.8/js/jsplumb.browser-ui.umd.js"></script>
 
   <style>
     /* =========================================================
@@ -689,52 +689,182 @@
   </div>
 
   <script>
-    const { newInstance } = jsPlumbBrowserUI;
+/**
+ * bhavsar.ai — jsPlumb script (UMD-safe)
+ * - Works with plain HTML + <script> tags (no bundler)
+ * - Uses window.jsPlumb (NOT jsPlumbBrowserUI)
+ * - Curved Bezier connectors + high visibility styling
+ * - Repaints on resize
+ */
+(function () {
+  "use strict";
 
-    function initPlumb(containerId, connections, opts = {}) {
-      const container = document.getElementById(containerId);
-      const connectorMain = getComputedStyle(document.documentElement)
-        .getPropertyValue('--connector-main').trim();
-      const connectorOutline = getComputedStyle(document.documentElement)
-        .getPropertyValue('--connector-outline').trim();
+  // ---------- Helpers ----------
+  function cssVar(name, fallback) {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  }
 
-      const instance = newInstance({
-        container,
-        endpoint: "Blank",
-        connector: { type: "Bezier", options: { curviness: opts.curviness ?? 170 } },
+  function byId(id) {
+    return document.getElementById(id);
+  }
 
-        paintStyle: {
-          stroke: connectorMain,
-          strokeWidth: opts.strokeWidth ?? 5,
-          outlineStroke: connectorOutline,
-          outlineWidth: opts.outlineWidth ?? 10
-        },
-
-        overlays: [
-          {
-            type: "Arrow",
-            options: {
-              location: 0.92,
-              width: opts.arrowSize ?? 18,
-              length: opts.arrowSize ?? 18,
-              foldback: 0.85
-            }
-          }
-        ]
-      });
-
-      container.querySelectorAll(".node,.anchor").forEach(el => {
-        instance.manage(el);
-        instance.setDraggable(el, false);
-      });
-
-      connections.forEach(c => instance.connect(c));
-
-      const ro = new ResizeObserver(() => instance.repaintEverything());
-      ro.observe(container);
-
-      return instance;
+  function ensureJsPlumb() {
+    if (!window.jsPlumb || typeof window.jsPlumb.newInstance !== "function") {
+      throw new Error(
+        "jsPlumb is not available. Ensure you loaded the UMD script before this script."
+      );
     }
+  }
+
+  // ---------- Style (pull from CSS vars; keep working even if missing) ----------
+  function getConnectorStyle() {
+    return {
+      stroke: cssVar("--connector-main", "#5B2FAF"),
+      strokeWidth: 5,
+      outlineStroke: cssVar("--connector-outline", "rgba(91,47,175,.18)"),
+      outlineWidth: 10
+    };
+  }
+
+  function getArrowOverlay(opts) {
+    const size = opts?.arrowSize ?? 18;
+    const location = opts?.arrowLocation ?? 0.92;
+
+    return [
+      "Arrow",
+      {
+        location,
+        width: size,
+        length: size,
+        foldback: 0.85
+      }
+    ];
+  }
+
+  // ---------- Create one jsPlumb instance per container ----------
+  function createInstance(containerEl, opts) {
+    const style = getConnectorStyle();
+
+    return window.jsPlumb.newInstance({
+      container: containerEl,
+      endpoint: "Blank",
+
+      connector: [
+        "Bezier",
+        { curviness: opts?.curviness ?? 170 }
+      ],
+
+      paintStyle: style,
+
+      overlays: [
+        getArrowOverlay(opts)
+      ]
+    });
+  }
+
+  // ---------- Manage nodes (must be called for each element you connect) ----------
+  function manageElements(instance, ids) {
+    ids.forEach((id) => {
+      const el = byId(id);
+      if (!el) return; // allow sections to be removed without breaking the script
+      instance.manage(el);
+      // For this site: fixed layout, not draggable
+      instance.setDraggable(el, false);
+    });
+  }
+
+  // ---------- Connect convenience ----------
+  function connectAll(instance, connections) {
+    connections.forEach((c) => {
+      // Safety: skip if endpoints missing
+      if (!byId(c.source) || !byId(c.target)) return;
+
+      instance.connect({
+        source: c.source,
+        target: c.target,
+        anchors: c.anchors || ["Bottom", "Top"]
+      });
+    });
+  }
+
+  // ---------- Repaint on resize (critical for responsive layouts) ----------
+  function repaintOnResize(instance, containerEl) {
+    if (!("ResizeObserver" in window)) return;
+
+    const ro = new ResizeObserver(() => instance.repaintEverything());
+    ro.observe(containerEl);
+  }
+
+  // ---------- Init one diagram ----------
+  function initDiagram(config) {
+    const containerEl = byId(config.containerId);
+    if (!containerEl) return null;
+
+    const instance = createInstance(containerEl, config.opts);
+
+    // Manage all endpoints (nodes + anchors)
+    manageElements(instance, config.elementIds);
+
+    // Connect
+    connectAll(instance, config.connections);
+
+    // Repaint responsive
+    repaintOnResize(instance, containerEl);
+
+    // Also repaint after fonts/layout settle
+    requestAnimationFrame(() => instance.repaintEverything());
+
+    return instance;
+  }
+
+  // ---------- Public init ----------
+  function initAll() {
+    ensureJsPlumb();
+
+    // VENN pointer (anchors inside #venn)
+    initDiagram({
+      containerId: "venn",
+      elementIds: ["fromText", "toOverlap"],
+      opts: { curviness: 220, arrowSize: 20, arrowLocation: 0.92 },
+      connections: [
+        { source: "fromText", target: "toOverlap", anchors: ["Right", "Left"] }
+      ]
+    });
+
+    // MODEL stack (#diagram1)
+    initDiagram({
+      containerId: "diagram1",
+      elementIds: ["humans", "behavior", "reasoning", "systems"],
+      opts: { curviness: 150, arrowSize: 18, arrowLocation: 0.92 },
+      connections: [
+        { source: "humans", target: "behavior", anchors: ["Bottom", "Top"] },
+        { source: "behavior", target: "reasoning", anchors: ["Bottom", "Top"] },
+        { source: "reasoning", target: "systems", anchors: ["Bottom", "Top"] }
+      ]
+    });
+
+    // SIGNALS (#diagram2)
+    initDiagram({
+      containerId: "diagram2",
+      elementIds: ["logs", "identity", "access", "modeling", "signalsOut"],
+      opts: { curviness: 190, arrowSize: 18, arrowLocation: 0.92 },
+      connections: [
+        { source: "logs", target: "modeling", anchors: ["Right", "Left"] },
+        { source: "identity", target: "modeling", anchors: ["Right", "Left"] },
+        { source: "access", target: "modeling", anchors: ["Right", "Left"] },
+        { source: "modeling", target: "signalsOut", anchors: ["Right", "Left"] }
+      ]
+    });
+  }
+
+  // Run after DOM is ready (important: nodes must exist)
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initAll);
+  } else {
+    initAll();
+  }
+})();
 
     // Venn pointer arrow
     initPlumb("venn", [
